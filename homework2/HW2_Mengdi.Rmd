@@ -1,6 +1,6 @@
 ---
 title: "HW2"
-author: "Mengdi Hao"
+author: "Group 11"
 date: "2024-03-31"
 output: pdf_document
 ---
