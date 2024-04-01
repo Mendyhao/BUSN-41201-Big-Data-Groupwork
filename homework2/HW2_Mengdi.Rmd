@@ -45,11 +45,15 @@ print(sum(pvals_pricey<=cutoff10)) # 37
 # example: those variable insignificant at cutoff10
 names(pvals_pricey)[pvals_pricey > cutoff10]
 
-# you can use the `-AMMORT' type syntax to drop variables
 # re-estimate the model
-pricey_drop <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS, data=homes)
-summary(pricey_drop)
-1-7188.3/13003.4
+pricey_drop1 <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS, data=homes)
+summary(pricey_drop1)
+1-7188.3/13003.4 # not dropping "STATE"
+
+# re-estimate the model
+pricey_drop2 <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS - STATE, data=homes)
+# summary(pricey_drop2)
+1-7493.4/13003.4 # dropping "STATE"
 ```
 
 # QUESTION 2
