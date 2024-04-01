@@ -28,11 +28,11 @@ After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re
 homes <- read.csv("homes2004.csv")
 
 # conditional vs marginal value
-par(mfrow=c(1,2)) # 1 row, 2 columns of plots 
-hist(homes$VALUE, col="grey", xlab="home value", main="")
-plot(VALUE ~ factor(BATHS), 
-    col=rainbow(8), data=homes[homes$BATHS<8,],
-    xlab="number of bathrooms", ylab="home value")
+# par(mfrow=c(1,2)) # 1 row, 2 columns of plots 
+# hist(homes$VALUE, col="grey", xlab="home value", main="")
+# plot(VALUE ~ factor(BATHS), 
+#     col=rainbow(8), data=homes[homes$BATHS<8,],
+#     xlab="number of bathrooms", ylab="home value")
 
 # create a var for downpayment being greater than 20%
 homes$gt20dwn <- 
@@ -47,7 +47,7 @@ pvals_pricey <- summary(pricey)$coef[-1,4]
 
 # @ 10% FDR
 source("fdr.R")
-cutoff10 <- fdr_cut(pvals_pricey, q=.1)
+cutoff10 <- fdr_cut(pvals_pricey, q=0.1)
 # print(cutoff10) # 0.0379
 # print(sum(pvals_pricey<=cutoff10)) # 37
 
