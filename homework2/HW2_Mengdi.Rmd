@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # QUESTION 1
@@ -17,52 +17,44 @@ knitr::opts_chunk$set(echo = FALSE)
 
 ## Re-run regression with only the significant covariates, and compare R2 to the full model. (2 points)
 
-This regression has 43 coefficients in total, including the intercept. Its R^2^ is 1-7066.8/13003.4 = 0.4565421, indicating that about 45.65% of the variability in the logarithm of the price is explain by the model. Out of the 43 coefficients, 37 are significant under a False Discovery Rate (FDR) of 10%.
+From the following regression output, this regression has 41 coefficients in total, excluding the intercept. Its R^2^ is 1-7186.9/13003.4 = 0.4473061, indicating that about 44.73% of the variability in the logarithm of the price is explain by the model. Out of the 43 coefficients, 36 are significant under a False Discovery Rate (FDR) of 10%.
 
-After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re-estimate the model, the R^2^ is 1-7067.8/13003.4 = 0.4564652. There is only a very small decrease in R^2^, suggesting that the removed variables contributed little to explaining the variability in log-price.
-
-```{r, out.width="90%"}
+```{r}
 ## Q1
 
 ## Read in the data
 homes <- read.csv("homes2004.csv")
 
-# conditional vs marginal value
-# par(mfrow=c(1,2)) # 1 row, 2 columns of plots 
-# hist(homes$VALUE, col="grey", xlab="home value", main="")
-# plot(VALUE ~ factor(BATHS), 
-#     col=rainbow(8), data=homes[homes$BATHS<8,],
-#     xlab="number of bathrooms", ylab="home value")
-
-# create a var for downpayment being greater than 20%
-homes$gt20dwn <- 
-	factor(0.2<(homes$LPRICE-homes$AMMORT)/homes$LPRICE)
-
 # regress log(PRICE) on everything except AMMORT 
 pricey <- glm(log(LPRICE) ~ .-AMMORT, data=homes)
-# summary(pricey)
+summary(pricey)
+1-7186.9/13003.4
+```
+After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re-estimate the model, the R^2^ is 1-7188.3/13003.4 = 0.4471984. There is only a very small decrease in R^2^, suggesting that the removed variables contributed little to explaining the variability in log-price.
 
+```{r}
 # extract pvalues
 pvals_pricey <- summary(pricey)$coef[-1,4]
 
 # @ 10% FDR
 source("fdr.R")
 cutoff10 <- fdr_cut(pvals_pricey, q=0.1)
-# print(cutoff10) # 0.0379
-# print(sum(pvals_pricey<=cutoff10)) # 37
+print(cutoff10) # 0.0379
+print(sum(pvals_pricey<=cutoff10)) # 37
 
 # example: those variable insignificant at cutoff10
-# names(pvals_pricey)[pvals_pricey > cutoff10]
+names(pvals_pricey)[pvals_pricey > cutoff10]
 
 # you can use the `-AMMORT' type syntax to drop variables
 # re-estimate the model
 pricey_drop <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS, data=homes)
-# summary(pricey_drop)
+summary(pricey_drop)
+1-7188.3/13003.4
 ```
 
 # QUESTION 2
 
-# Fit a regression for whether the buyer had more than 20 percent down (onto everything but AMMORT and LPRICE). Interpret effects for Pennsylvania state, 1st home buyers and the number  of bathrooms.Add and describe an interaction between 1st home-buyers and the number of baths. (2 points)
+## Fit a regression for whether the buyer had more than 20 percent down (onto everything but AMMORT and LPRICE). Interpret effects for Pennsylvania state, 1st home buyers and the number  of bathrooms.Add and describe an interaction between 1st home-buyers and the number of baths. (2 points)
 
 In the logistic regression model predicting the likelihood of a buyer putting down more than 20% of the purchase price, significant predictors include the state of Pennsylvania ("STATEPA"), whether the buyer is purchasing their first home ("FRSTHOY"), and the number of bathrooms ("BATHS"). The positive coefficient for "STATEPA" (0.6011) indicates that, all else equal, buyers in Pennsylvania are about 1.824 times more likely to make a larger down payment compared to buyers in other states. This might reflect state-specific market conditions or policies that favor or require larger down payments.
 
@@ -70,48 +62,39 @@ Conversely, "FRSTHOY" has a negative coefficient (-0.37), suggesting first-time 
 
 The negative coefficient for "BATHS" (-0.2445) implies that as the number of bathrooms increases, the likelihood of making a larger down payment decreases, with the odds being about 21.7% lower than repeat buyers (odds multiplier is 0.783), possibly reflecting higher overall property prices or buyer preferences for more modest homes when making larger down payments.
 
+```{r}
+## Q2 
+
+# create a var for downpayment being greater than 20%
+homes$gt20dwn <-
+	factor(0.2<(homes$LPRICE-homes$AMMORT)/homes$LPRICE)
+
+# regress gt20dwn on everything except AMMORT and LPRICE 
+gt20dwn_y <- glm(gt20dwn ~ .- AMMORT - LPRICE, data=homes, family='binomial')
+summary(gt20dwn_y)
+```
+
 The interaction between "FRSTHO" and "BATHS" indicates that the negative impact of having more bathrooms on the likelihood of a larger down payment is further reduced for first-time buyers, with an odds multiplier of exp(-0.202)=0.817, suggesting different purchasing behaviors or financial strategies among this group.
 
 ```{r}
-## Q2 
-# regress gt20dwn on everything except AMMORT and LPRICE 
-gt20dwn_y <- glm(gt20dwn ~ .- AMMORT - LPRICE, data=homes, family='binomial')
-# summary(gt20dwn_y)
-
-# extract pvalues
-pvals_gt <- summary(gt20dwn_y)$coef[-1,4]
-
-# @ 10% FDR
-source("fdr.R")
-cutoff10 <- fdr_cut(pvals_gt, q=.1)
-# print(cutoff10) # 0.05038546
-# print(sum(pvals_gt<=cutoff10)) # 23
-
-# example: those variable insignificant at cutoff10
-# names(pvals_gt)[pvals_gt > cutoff10]
-
 # add interaction between "FRSTHO" and "BATHS"
 gt20dwn_y_2 <- glm(gt20dwn ~ .- AMMORT - LPRICE + BATHS*FRSTHO, data=homes, family='binomial')
-# summary(gt20dwn_y_2)
+summary(gt20dwn_y_2)
 ```
 
 # QUESTION 3
 
-# Focus only on a subset of homes worth $>100k$.
+## Focus only on a subset of homes worth $>100k$.
 
-# Train the full model from Question 1 on this subset. Predict the left-out homes using this model. What is the out-of-sample fit (i.e. R2)? Explain why you get this value. (1 point)
-
-The model trained on homes valued over $100k resulted in an out-of-sample (OOS) R^2^ of -0.049. This negative R^2^ suggests that the model performs worse on unseen data than a naive model that predicts the average log price for all observations, indicating potential over-fitting to the training data.
-
-Negative R^2^ in this context points to the model's limited generalizability. For GLMs, especially with transformed outcomes like log prices, R^2^ may not be the most appropriate measure of model performance. Alternative evaluation metrics, such as AIC, BIC, or cross-validation, should be considered to better assess the model's predictive accuracy and to ensure it captures underlying trends rather than noise.
+## Train the full model from Question 1 on this subset. Predict the left-out homes using this model. What is the out-of-sample fit (i.e. R2)? Explain why you get this value. (1 point)
 
 ```{r}
 # Take a subset of the data
 subset <- which(homes$VALUE>100000)
 
 # regress log(PRICE) on everything except AMMORT 
-pricey_subset <- glm(log(LPRICE) ~ .-AMMORT, data=homes[subset,])
-# summary(pricey_subset)
+pricey_subset <- glm(log(LPRICE) ~ .-AMMORT - gt20dwn, data=homes[subset,])
+summary(pricey_subset)
 
 # get the predicted "log(LPRICE)" on the other subset of "homes"
 price_pred <- predict(pricey_subset, newdata=homes[-subset,])
@@ -128,8 +111,9 @@ ybar <- mean(log(homes$LPRICE[-subset]))
 D0 <- deviance(y=log(homes$LPRICE[-subset]), pred=ybar, family="gaussian")
 
 # out-of-sample predicted R2
-# 1-D/D0
-
-# in-sample R2 is higher than out-of-sample R2
-# 1 - 4439.1/7300.4
+1-D/D0
 ```
+
+The model trained on homes valued over $100k resulted in an out-of-sample (OOS) R^2^ of -0.049. This negative R^2^ suggests that the model performs worse on unseen data than a naive model that predicts the average log price for all observations, indicating potential over-fitting to the training data.
+
+Negative R^2^ in this context points to the model's limited generalizability. For GLMs, especially with transformed outcomes like log prices, R^2^ may not be the most appropriate measure of model performance. Alternative evaluation metrics, such as AIC, BIC, or cross-validation, should be considered to better assess the model's predictive accuracy and to ensure it captures underlying trends rather than noise.
