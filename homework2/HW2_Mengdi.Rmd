@@ -1,12 +1,12 @@
 ---
 title: "HW2"
-author: "Group 11"
+author: "Yu-Ting Weng,	Mengdi Hao,	Elena Li,	Minji Park,	Sarah Lee"
 date: "2024-03-31"
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 # QUESTION 1
@@ -17,7 +17,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Re-run regression with only the significant covariates, and compare R2 to the full model. (2 points)
 
-From the following regression output, this regression has 42 coefficients in total, excluding the intercept. Its R^2^ is 1-7066.8/13003.4 = 0.4565421, indicating that about 45.65% of the variability in the logarithm of the price is explain by the model. Out of the 42 coefficients, 37 are significant under a False Discovery Rate (FDR) of 10%.
+The following is the regression result of the full model:
 
 ```{r}
 ## Q1
@@ -32,9 +32,9 @@ homes$gt20dwn <-
 # regress log(PRICE) on everything except AMMORT 
 pricey <- glm(log(LPRICE) ~ .-AMMORT, data=homes)
 summary(pricey)
-1-7066.8/13003.4
+cat("R-squared: ", 1-pricey$deviance/pricey$null.deviance, "\n")
 ```
-After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re-estimate the model, the R^2^ is 1-7067.8/13003.4 = 0.4564652. There is only a very small decrease in R^2^, suggesting that the removed variables contributed little to explaining the variability in log-price.
+From the above regression output, this regression has 42 coefficients in total, excluding the intercept. Its R^2^ is 1-7066.8/13003.4 = 0.4565419, indicating that about 45.65% of the variability in the logarithm of the price is explain by the model. Out of the 42 coefficients, 37 are significant under a False Discovery Rate (FDR) of 10%.
 
 ```{r}
 # extract pvalues
@@ -43,27 +43,22 @@ pvals_pricey <- summary(pricey)$coef[-1,4]
 # @ 10% FDR
 source("fdr.R")
 cutoff10 <- fdr_cut(pvals_pricey, q=0.1)
-print(cutoff10) # 0.0379
-print(sum(pvals_pricey<=cutoff10)) # 37
+cat("p-value at FDR 10%: ", cutoff10, "\n")
+cat("number of significant coefficients at FDR 10%: ", sum(pvals_pricey<=cutoff10), "\n")
 
 # example: those variable insignificant at cutoff10
-names(pvals_pricey)[pvals_pricey > cutoff10]
+cat("insignificant variables: ", names(pvals_pricey)[pvals_pricey > cutoff10], "\n")
 
 # re-estimate the model
 pricey_drop <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS, data=homes)
 summary(pricey_drop)
-1-7067.8/13003.4 # not dropping "STATE"
+cat("R-squared: ", 1-pricey_drop$deviance/pricey_drop$null.deviance, "\n")
 ```
+After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re-estimate the model, the R^2^ is 1-7067.8/13003.4 = 0.4564626. There is only a very small decrease in R^2^, suggesting that the removed variables contributed little to explaining the variability in log-price.
 
 # QUESTION 2
 
 ## Fit a regression for whether the buyer had more than 20 percent down (onto everything but AMMORT and LPRICE). Interpret effects for Pennsylvania state, 1st home buyers and the number  of bathrooms.Add and describe an interaction between 1st home-buyers and the number of baths. (2 points)
-
-In the logistic regression model predicting the likelihood of a buyer putting down more than 20% of the purchase price, significant predictors include the state of Pennsylvania ("STATEPA"), whether the buyer is purchasing their first home ("FRSTHOY"), and the number of bathrooms ("BATHS"). The positive coefficient for "STATEPA" (0.6011) indicates that, all else equal, buyers in Pennsylvania are about 1.824 times more likely to make a larger down payment compared to buyers in other states. This might reflect state-specific market conditions or policies that favor or require larger down payments.
-
-Conversely, "FRSTHOY" has a negative coefficient (-0.37), suggesting first-time home buyers are less likely to make a down payment of over 20%, with the odds being about 30.3% lower than repeat buyers (odds multiplier is 0.697). This could be due to first-time buyers having less accumulated wealth or being more cautious with their initial home investment.
-
-The negative coefficient for "BATHS" (-0.2445) implies that as the number of bathrooms increases, the likelihood of making a larger down payment decreases, with the odds being about 21.7% lower than repeat buyers (odds multiplier is 0.783), possibly reflecting higher overall property prices or buyer preferences for more modest homes when making larger down payments.
 
 ```{r}
 ## Q2 
@@ -72,20 +67,27 @@ The negative coefficient for "BATHS" (-0.2445) implies that as the number of bat
 gt20dwn_y <- glm(gt20dwn ~ .- AMMORT - LPRICE, data=homes, family='binomial')
 summary(gt20dwn_y)
 ```
+In the logistic regression model predicting the likelihood of a buyer putting down more than 20% of the purchase price, significant predictors include the state of Pennsylvania ("STATEPA"), whether the buyer is purchasing their first home ("FRSTHOY"), and the number of bathrooms ("BATHS"). The positive coefficient for "STATEPA" (0.6011) indicates that, all else equal, buyers in Pennsylvania are about 1.824 times more likely to make a larger down payment compared to buyers in other states. This might reflect state-specific market conditions or policies that favor or require larger down payments.
 
-The interaction between "FRSTHO" and "BATHS" indicates that the negative impact of having more bathrooms on the likelihood of a larger down payment is further reduced for first-time buyers, with an odds multiplier of exp(-0.202)=0.817, suggesting different purchasing behaviors or financial strategies among this group.
+Conversely, "FRSTHOY" has a negative coefficient (-0.37), suggesting first-time home buyers are less likely to make a down payment of over 20%, with the odds being about 30.3% lower than repeat buyers (odds multiplier is 0.697). This could be due to first-time buyers having less accumulated wealth or being more cautious with their initial home investment.
+
+The negative coefficient for "BATHS" (-0.2445) implies that as the number of bathrooms increases, the likelihood of making a larger down payment decreases, with the odds being about 21.7% lower than repeat buyers (odds multiplier is 0.783), possibly reflecting higher overall property prices or buyer preferences for more modest homes when making larger down payments.
 
 ```{r}
 # add interaction between "FRSTHO" and "BATHS"
 gt20dwn_y_2 <- glm(gt20dwn ~ .- AMMORT - LPRICE + BATHS*FRSTHO, data=homes, family='binomial')
 summary(gt20dwn_y_2)
 ```
+The interaction between "FRSTHO" and "BATHS" indicates that the negative impact of having more bathrooms on the likelihood of a larger down payment is further reduced for first-time buyers, with an odds multiplier of exp(-0.202)=0.817, suggesting different purchasing behaviors or financial strategies among this group.
+
 
 # QUESTION 3
 
 ## Focus only on a subset of homes worth $>100k$.
 
 ## Train the full model from Question 1 on this subset. Predict the left-out homes using this model. What is the out-of-sample fit (i.e. R2)? Explain why you get this value. (1 point)
+
+The following is a regression on the subset data:
 
 ```{r}
 # Take a subset of the data
@@ -110,7 +112,7 @@ ybar <- mean(log(homes$LPRICE[-subset]))
 D0 <- deviance(y=log(homes$LPRICE[-subset]), pred=ybar, family="gaussian")
 
 # out-of-sample predicted R2
-1-D/D0
+cat("OOS R-squared: ", 1-D/D0, "\n")
 ```
 
 The model trained on homes valued over $100k resulted in an out-of-sample (OOS) R^2^ of -0.049. This negative R^2^ suggests that the model performs worse on unseen data than a naive model that predicts the average log price for all observations, indicating potential over-fitting to the training data.
