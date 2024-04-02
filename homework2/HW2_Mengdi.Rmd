@@ -17,7 +17,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Re-run regression with only the significant covariates, and compare R2 to the full model. (2 points)
 
-From the following regression output, this regression has 41 coefficients in total, excluding the intercept. Its R^2^ is 1-7186.9/13003.4 = 0.4473061, indicating that about 44.73% of the variability in the logarithm of the price is explain by the model. Out of the 43 coefficients, 36 are significant under a False Discovery Rate (FDR) of 10%.
+From the following regression output, this regression has 42 coefficients in total, excluding the intercept. Its R^2^ is 1-7066.8/13003.4 = 0.4565421, indicating that about 45.65% of the variability in the logarithm of the price is explain by the model. Out of the 42 coefficients, 37 are significant under a False Discovery Rate (FDR) of 10%.
 
 ```{r}
 ## Q1
@@ -25,12 +25,16 @@ From the following regression output, this regression has 41 coefficients in tot
 ## Read in the data
 homes <- read.csv("homes2004.csv")
 
+# create a var for downpayment being greater than 20%
+homes$gt20dwn <-
+	factor(0.2<(homes$LPRICE-homes$AMMORT)/homes$LPRICE)
+
 # regress log(PRICE) on everything except AMMORT 
 pricey <- glm(log(LPRICE) ~ .-AMMORT, data=homes)
 summary(pricey)
-1-7186.9/13003.4
+1-7066.8/13003.4
 ```
-After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re-estimate the model, the R^2^ is 1-7188.3/13003.4 = 0.4471984. There is only a very small decrease in R^2^, suggesting that the removed variables contributed little to explaining the variability in log-price.
+After removing the insignificant variables ("ETRANS", "NUNITS", "BEDRMS") and re-estimate the model, the R^2^ is 1-7067.8/13003.4 = 0.4564652. There is only a very small decrease in R^2^, suggesting that the removed variables contributed little to explaining the variability in log-price.
 
 ```{r}
 # extract pvalues
@@ -46,14 +50,9 @@ print(sum(pvals_pricey<=cutoff10)) # 37
 names(pvals_pricey)[pvals_pricey > cutoff10]
 
 # re-estimate the model
-pricey_drop1 <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS, data=homes)
-summary(pricey_drop1)
-1-7188.3/13003.4 # not dropping "STATE"
-
-# re-estimate the model
-pricey_drop2 <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS - STATE, data=homes)
-# summary(pricey_drop2)
-1-7493.4/13003.4 # dropping "STATE"
+pricey_drop <- glm(log(LPRICE) ~ . - AMMORT - ETRANS - NUNITS - BEDRMS, data=homes)
+summary(pricey_drop)
+1-7067.8/13003.4 # not dropping "STATE"
 ```
 
 # QUESTION 2
@@ -68,10 +67,6 @@ The negative coefficient for "BATHS" (-0.2445) implies that as the number of bat
 
 ```{r}
 ## Q2 
-
-# create a var for downpayment being greater than 20%
-homes$gt20dwn <-
-	factor(0.2<(homes$LPRICE-homes$AMMORT)/homes$LPRICE)
 
 # regress gt20dwn on everything except AMMORT and LPRICE 
 gt20dwn_y <- glm(gt20dwn ~ .- AMMORT - LPRICE, data=homes, family='binomial')
@@ -97,7 +92,7 @@ summary(gt20dwn_y_2)
 subset <- which(homes$VALUE>100000)
 
 # regress log(PRICE) on everything except AMMORT 
-pricey_subset <- glm(log(LPRICE) ~ .-AMMORT - gt20dwn, data=homes[subset,])
+pricey_subset <- glm(log(LPRICE) ~ .-AMMORT, data=homes[subset,])
 summary(pricey_subset)
 
 # get the predicted "log(LPRICE)" on the other subset of "homes"
