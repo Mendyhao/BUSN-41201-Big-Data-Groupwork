@@ -1,0 +1,216 @@
+---
+title: "Data processing"
+author: "Mengdi Hao"
+date: "2024-05-14"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+data <- read.csv("Airbnb_Data.csv")
+
+# delete id and text variables
+data <- select(data, -c(id, description, name))
+```
+
+```{r}
+data$room_type <- as.factor(data$room_type)
+data$property_type <- as.factor(data$property_type)
+data$bed_type <- as.factor(data$bed_type)
+data$cancellation_policy <- as.factor(data$cancellation_policy)
+data$city <- as.factor(data$city)
+data$host_has_profile_pic <- as.factor(data$host_has_profile_pic)
+data$host_identity_verified <- as.factor(data$host_identity_verified)
+data$host_response_rate <- as.factor(data$host_response_rate)
+data$instant_bookable <- as.factor(data$instant_bookable)
+
+
+# Convert host_response_rate to numeric by removing the '%' sign
+data$host_response_rate <- as.numeric(gsub("%", "", data$host_response_rate))
+```
+
+```{r}
+# handle amenities variable: transform into multiple columns
+data$amenities <- str_replace_all(data$amenities, '[{}"]', '')
+amenities_list <- str_split(data$amenities, ",")
+
+all_amenities <- unique(unlist(amenities_list))
+
+for (amenity in all_amenities) {
+  data[[amenity]] <- sapply(amenities_list, function(x) amenity %in% x)
+}
+
+data <- select(data, -amenities)
+```
+
+```{r}
+# handle date variables
+data$first_review <- as.Date(data$first_review, format="%m/%d/%Y")
+data$last_review <- as.Date(data$last_review, format="%m/%d/%Y")
+data$host_since <- as.Date(data$host_since, format="%m/%d/%Y")
+
+# transform date variables into more meaningful variables
+data$days_since_first_review <- as.numeric(Sys.Date() - data$first_review)
+data$days_since_last_review <- as.numeric(Sys.Date() - data$last_review)
+data$host_duration <- as.numeric(Sys.Date() - data$host_since)
+
+# delete first_review, last_review, host_since
+data <- select(data, -c(first_review, last_review, host_since))
+
+```
+
+```{r}
+# turn thumbnail_url into a binary categorical variable
+data$has_thumbnail <- ifelse(is.na(data$thumbnail_url) | data$thumbnail_url == "", FALSE, TRUE)
+
+# delete thumbnail_url
+data <- select(data, -thumbnail_url)
+```
+
+```{r}
+count_missing <- function(x) {
+  sum(is.na(x) | x == "")
+}
+
+# Create a summary of missing values (NA and empty strings) for each column
+missing_values_summary <- data %>%
+  summarise_all(count_missing) %>%
+  gather(key = "variable", value = "missing_count") %>%
+  arrange(desc(missing_count))
+
+print(missing_values_summary)
+```
+
+```{r}
+# Impute the above numerical variables that have missing values with median values
+data$host_response_rate[is.na(data$host_response_rate)] <- median(data$host_response_rate, na.rm = TRUE)
+data$review_scores_rating[is.na(data$review_scores_rating)] <- median(data$review_scores_rating, na.rm = TRUE)
+data$days_since_first_review[is.na(data$days_since_first_review)] <- median(data$days_since_first_review, na.rm = TRUE)
+data$days_since_last_review[is.na(data$days_since_last_review)] <- median(data$days_since_last_review, na.rm = TRUE)
+data$bathrooms[is.na(data$bathrooms)] <- median(data$bathrooms, na.rm = TRUE)
+data$host_duration[is.na(data$host_duration)] <- median(data$host_duration, na.rm = TRUE)
+data$beds[is.na(data$beds)] <- median(data$beds, na.rm = TRUE)
+data$bedrooms[is.na(data$bedrooms)] <- median(data$bedrooms, na.rm = TRUE)
+
+# Replace missing values with specific values for categorical columns
+data$host_has_profile_pic[is.na(data$host_has_profile_pic) | data$host_has_profile_pic == ''] <- 'f'
+data$host_identity_verified[is.na(data$host_identity_verified) | data$host_identity_verified == ''] <- 'f'
+data$neighbourhood[is.na(data$neighbourhood) | data$neighbourhood == ''] <- 'Unknown'
+data$zipcode[is.na(data$zipcode) | data$zipcode == ''] <- 'Unknown'
+
+# Convert to factors
+data$neighbourhood <- as.factor(data$neighbourhood)
+data$zipcode <- as.factor(data$zipcode)
+```
+
+```{r}
+# extract numerical variable names
+numeric_vars <- c("log_price", "accommodates", "bathrooms", "host_response_rate", 
+                  "latitude", "longitude", "number_of_reviews", "review_scores_rating", 
+                  "bedrooms", "beds", "days_since_first_review", "days_since_last_review", 
+                  "host_duration")
+
+# extract categorical variable names
+categorical_vars <- setdiff(names(data), numeric_vars)
+
+# standardize numerical variables
+data_numeric <- scale(data[numeric_vars])
+data_numeric <- as.data.frame(data_numeric)
+
+# combine standardized numerical variables with categorical variables
+data_scale <- cbind(data_numeric, data[categorical_vars])
+
+```
+
+```{r}
+# 清理列名
+names(data) <- make.names(names(data), unique = TRUE)
+
+# 查看新的列名
+print(names(data))
+```
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(caret)
+
+data <- select(data, -c(neighbourhood, zipcode))
+
+# split data into training and testing data
+set.seed(123)
+trainIndex <- createDataPartition(data$log_price, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+trainData <- data[trainIndex, ]
+testData <- data[-trainIndex, ]
+
+# 构建决策树模型
+tree_model <- rpart(log_price ~ ., data = trainData, method = "anova")
+
+# 查看模型摘要
+summary(tree_model)
+
+# 可视化决策树
+rpart.plot(tree_model)
+
+# 使用测试集进行预测
+tree_predictions <- predict(tree_model, newdata = testData)
+
+# 计算均方根误差（RMSE）
+tree_rmse <- sqrt(mean((testData$log_price - tree_predictions)^2))
+print(paste("Decision Tree RMSE:", tree_rmse))
+
+# 计算R^2
+tree_r2 <- 1 - sum((testData$log_price - tree_predictions)^2) / sum((testData$log_price - mean(testData$log_price))^2)
+print(paste("Decision Tree R^2:", tree_r2))
+
+# 模型优化：调整复杂度参数（cp）进行剪枝
+printcp(tree_model)
+optimal_cp <- tree_model$cptable[which.min(tree_model$cptable[,"xerror"]),"CP"]
+pruned_tree_model <- prune(tree_model, cp = optimal_cp)
+rpart.plot(pruned_tree_model)
+
+# 使用修剪后的决策树进行预测
+pruned_tree_predictions <- predict(pruned_tree_model, newdata = testData)
+
+# 计算修剪后模型的RMSE
+pruned_tree_rmse <- sqrt(mean((testData$log_price - pruned_tree_predictions)^2))
+print(paste("Pruned Decision Tree RMSE:", pruned_tree_rmse))
+
+# 计算修剪后模型的R^2
+pruned_tree_r2 <- 1 - sum((testData$log_price - pruned_tree_predictions)^2) / sum((testData$log_price - mean(testData$log_price))^2)
+print(paste("Pruned Decision Tree R^2:", pruned_tree_r2))
+
+
+```
+
+
+```{r}
+
+library(randomForest)
+
+# 构建随机森林模型
+set.seed(123)
+rf_model <- randomForest(log_price ~ ., data = trainData, importance = TRUE, ntree = 500)
+
+# 使用测试集进行预测
+rf_predictions <- predict(rf_model, newdata = testData)
+
+# 计算随机森林模型的RMSE
+rf_rmse <- sqrt(mean((testData$log_price - rf_predictions)^2))
+print(paste("Random Forest RMSE:", rf_rmse))
+
+# 计算随机森林模型的R²
+rf_r2 <- 1 - sum((testData$log_price - rf_predictions)^2) / sum((testData$log_price - mean(testData$log_price))^2)
+print(paste("Random Forest R²:", rf_r2))
+
+# 查看特征重要性
+varImpPlot(rf_model)
+
+```
