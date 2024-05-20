@@ -1,0 +1,224 @@
+---
+title: "Final_project"
+output: pdf_document
+date: "2024-05-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(glmnet)
+library(caret)
+
+data <- read.csv("Airbnb_Data.csv")
+
+# delete id and text variables
+data <- select(data, -c(id, description, name))
+
+data$room_type <- as.factor(data$room_type)
+data$property_type <- as.factor(data$property_type)
+data$bed_type <- as.factor(data$bed_type)
+data$cancellation_policy <- as.factor(data$cancellation_policy)
+data$city <- as.factor(data$city)
+data$host_has_profile_pic <- as.factor(data$host_has_profile_pic)
+data$host_identity_verified <- as.factor(data$host_identity_verified)
+data$host_response_rate <- as.factor(data$host_response_rate)
+data$instant_bookable <- as.factor(data$instant_bookable)
+
+# Convert host_response_rate to numeric by removing the '%' sign
+data$host_response_rate <- as.numeric(gsub("%", "", data$host_response_rate))
+
+# handle amenities variable: transform into multiple columns
+data$amenities <- str_replace_all(data$amenities, '[{}"]', '')
+amenities_list <- str_split(data$amenities, ",")
+
+all_amenities <- unique(unlist(amenities_list))
+
+for (amenity in all_amenities) {
+  data[[amenity]] <- sapply(amenities_list, function(x) amenity %in% x)
+}
+
+data <- select(data, -amenities)
+
+# handle date variables
+data$first_review <- as.Date(data$first_review, format="%Y-%m-%d")
+data$last_review <- as.Date(data$last_review, format="%Y-%m-%d")
+data$host_since <- as.Date(data$host_since, format="%Y-%m-%d")
+
+# transform date variables into more meaningful variables
+data$days_since_first_review <- c(Sys.Date() - data$first_review)
+data$days_since_last_review <- c(Sys.Date() - data$last_review)
+data$host_duration <- c(Sys.Date() - data$host_since)
+
+# delete first_review, last_review, host_since
+data <- select(data, -c(first_review, last_review, host_since))
+
+# turn thumbnail_url into a binary categorical variable
+data$has_thumbnail <- ifelse(is.na(data$thumbnail_url) | data$thumbnail_url == "", FALSE, TRUE)
+
+# delete thumbnail_url
+data <- select(data, -thumbnail_url)
+
+count_missing <- function(x) {
+  sum(is.na(x) | x == "")
+}
+
+# Create a summary of missing values (NA and empty strings) for each column
+missing_values_summary <- data %>%
+  summarise_all(count_missing) %>%
+  gather(key = "variable", value = "missing_count") %>%
+  arrange(desc(missing_count))
+
+print(missing_values_summary)
+
+# Impute the above numerical variables that have missing values with median values
+data$host_response_rate[is.na(data$host_response_rate)] <- median(data$host_response_rate, na.rm = TRUE)
+data$review_scores_rating[is.na(data$review_scores_rating)] <- median(data$review_scores_rating, na.rm = TRUE)
+data$days_since_first_review[is.na(data$days_since_first_review)] <- median(data$days_since_first_review, na.rm = TRUE)
+data$days_since_last_review[is.na(data$days_since_last_review)] <- median(data$days_since_last_review, na.rm = TRUE)
+data$bathrooms[is.na(data$bathrooms)] <- median(data$bathrooms, na.rm = TRUE)
+data$host_duration[is.na(data$host_duration)] <- median(data$host_duration, na.rm = TRUE)
+data$beds[is.na(data$beds)] <- median(data$beds, na.rm = TRUE)
+data$bedrooms[is.na(data$bedrooms)] <- median(data$bedrooms, na.rm = TRUE)
+
+# Replace missing values with specific values for categorical columns
+data$host_has_profile_pic[is.na(data$host_has_profile_pic) | data$host_has_profile_pic == ''] <- 'f'
+data$host_identity_verified[is.na(data$host_identity_verified) | data$host_identity_verified == ''] <- 'f'
+data$neighbourhood[is.na(data$neighbourhood) | data$neighbourhood == ''] <- 'Unknown'
+data$zipcode[is.na(data$zipcode) | data$zipcode == ''] <- 'Unknown'
+
+# Convert to factors
+data$neighbourhood <- as.factor(data$neighbourhood)
+data$zipcode <- as.factor(data$zipcode)
+
+# extract numerical variable names
+numeric_vars <- c("log_price", "accommodates", "bathrooms", "host_response_rate", 
+                  "latitude", "longitude", "number_of_reviews", "review_scores_rating", 
+                  "bedrooms", "beds", "days_since_first_review", "days_since_last_review", 
+                  "host_duration")
+
+data[numeric_vars] <- lapply(data[numeric_vars], as.numeric)
+
+# extract categorical variable names
+categorical_vars <- setdiff(names(data), numeric_vars)
+
+# standardize numerical variables
+data_numeric <- scale(data[numeric_vars])
+data_numeric <- as.data.frame(data_numeric)
+
+# combine standardized numerical variables with categorical variables
+data_scale <- cbind(as.data.frame(data_numeric), data[categorical_vars])
+```
+
+
+
+```{r}
+data_scale$cleaning_fee <- as.logical(data_scale$cleaning_fee)
+
+##Regression_numerical&categorical
+# Separate features and target variable
+x <- model.matrix(log_price ~ ., data_scale)[, -1]
+y <- data_scale$log_price
+
+# Set up cross-validation for LASSO and Ridge Regression
+set.seed(123) # For reproducibility
+cv_lasso <- cv.glmnet(x, y, alpha = 1, standardize = TRUE)
+cv_ridge <- cv.glmnet(x, y, alpha = 0, standardize = TRUE)
+
+# Best lambda for each model
+best_lambda_lasso <- cv_lasso$lambda.min
+best_lambda_ridge <- cv_ridge$lambda.min
+
+# Train the final models using the best lambda
+lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda_lasso, standardize = TRUE)
+ridge_model <- glmnet(x, y, alpha = 0, lambda = best_lambda_ridge, standardize = TRUE)
+
+# Evaluate models
+# Split the data into training and test sets
+set.seed(123) # For reproducibility
+trainIndex <- createDataPartition(data_scale$log_price, p = 0.8, list = FALSE, times = 1)
+loft_train <- data_scale[trainIndex, ]
+loft_test <- data_scale[-trainIndex, ]
+
+# Prepare training and test sets for prediction
+x_train <- model.matrix(log_price ~ ., loft_train)[, -1]
+y_train <- loft_train$log_price
+x_test <- model.matrix(log_price ~ ., loft_test)[, -1]
+y_test <- loft_test$log_price
+
+# Predictions
+lasso_pred <- predict(lasso_model, s = best_lambda_lasso, newx = x_test)
+ridge_pred <- predict(ridge_model, s = best_lambda_ridge, newx = x_test)
+
+# Calculate performance metrics
+lasso_mse <- mean((y_test - lasso_pred)^2)
+lasso_rmse <- sqrt(lasso_mse)
+lasso_mae <- mean(abs(y_test - lasso_pred))
+lasso_r2 <- cor(y_test, lasso_pred)^2
+
+ridge_mse <- mean((y_test - ridge_pred)^2)
+ridge_rmse <- sqrt(ridge_mse)
+ridge_mae <- mean(abs(y_test - ridge_pred))
+ridge_r2 <- cor(y_test, ridge_pred)^2
+
+# Compare models
+comparison <- data.frame(
+  Model = c("LASSO", "Ridge"),
+  RMSE = c(lasso_rmse, ridge_rmse),
+  MSE = c(lasso_mse, ridge_mse),
+  MAE = c(lasso_mae, ridge_mae),
+  R_squared = c(lasso_r2, ridge_r2)
+)
+comparison
+```
+
+
+```{r}
+lasso_coefs <- coef(lasso_model, s = best_lambda_lasso)
+lasso_coefs <- as.data.frame(as.matrix(lasso_coefs))
+colnames(lasso_coefs) <- c("Coefficient")
+lasso_coefs <- lasso_coefs %>%
+  rownames_to_column(var = "Feature") %>%
+  arrange(desc(abs(Coefficient)))
+head(lasso_coefs, 10)
+```
+
+
+```{r}
+lasso_pred_train <- predict(lasso_model, s = best_lambda_lasso, newx = x_train)
+ridge_pred_train <- predict(ridge_model, s = best_lambda_ridge, newx = x_train)
+
+lasso_pred_test <- predict(lasso_model, s = best_lambda_lasso, newx = x_test)
+ridge_pred_test <- predict(ridge_model, s = best_lambda_ridge, newx = x_test)
+
+# Calculate performance metrics
+in_sample_r2 <- function(y_true, y_pred) {
+  cor(y_true, y_pred)^2
+}
+
+out_of_sample_r2 <- function(y_true, y_pred) {
+  1 - sum((y_true - y_pred)^2) / sum((y_true - mean(y_true))^2)
+}
+
+# In-sample R-squared
+lasso_in_sample_r2 <- in_sample_r2(y_train, lasso_pred_train)
+ridge_in_sample_r2 <- in_sample_r2(y_train, ridge_pred_train)
+
+# Out-of-sample R-squared
+lasso_out_sample_r2 <- out_of_sample_r2(y_test, lasso_pred_test)
+ridge_out_sample_r2 <- out_of_sample_r2(y_test, ridge_pred_test)
+
+# Compare models
+comparison <- data.frame(
+  Model = c("LASSO", "Ridge"),
+  In_sample_R2 = c(lasso_in_sample_r2, ridge_in_sample_r2),
+  Out_sample_R2 = c(lasso_out_sample_r2, ridge_out_sample_r2)
+)
+comparison
+```
+
+
+
