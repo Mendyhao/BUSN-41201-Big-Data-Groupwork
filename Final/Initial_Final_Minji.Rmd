@@ -1,0 +1,737 @@
+---
+title: "**BUSN 41201 Initial Final**"
+author: "Group 11: Yu-Ting Weng, Mengdi Hao, Elena Li, Minji Park, Sarah Lee"
+header-includes:
+- \usepackage{fancyhdr}
+- \pagestyle{fancy}
+- \fancyhead[L]{BUSN 41201, Spring 2024}
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+  word_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(cluster)
+library(factoextra)
+library(corrplot)
+library(GGally)
+library(mice)
+library(tidyverse)
+library(corrplot)
+library(reshape2)  # To reshape data
+library(ggcorrplot)
+library(gridExtra)
+library(stringr)
+library(mltools)
+library(data.table)
+library(patchwork)
+```
+
+## Load the Data
+
+```{r, echo=FALSE}
+data <- read.csv("Airbnb_Data.csv")
+```
+
+-   Summary statistics for numerical attributes
+
+```{r echo=FALSE}
+cat("\nSummary statistics for numerical attributes:\n")
+data %>%
+  select_if(is.numeric) %>%
+  summary()
+```
+
+-   Convert to factors for categorical variables
+
+```{r echo=FALSE}
+data$room_type <- as.factor(data$room_type)
+data$property_type <- as.factor(data$property_type)
+data$bed_type <- as.factor(data$bed_type)
+data$cancellation_policy <- as.factor(data$cancellation_policy)
+data$city <- as.factor(data$city)
+#data$amenities <- as.factor(data$amenities)
+#data$description <- as.factor(data$description)
+#data$first_review <- as.factor(data$first_review)
+#data$host_has_profile_pic <- as.factor(data$host_has_profile_pic)
+#data$first_review <- as.factor(data$first_review)
+#data$host_identity_verified <- as.factor(data$host_identity_verified)
+#data$host_response_rate <- as.factor(data$host_response_rate)
+#data$host_since <- as.factor(data$host_since)
+data$instant_bookable <- as.factor(data$instant_bookable)
+#data$last_review <- as.factor(data$last_review)
+#data$neighbourhood <- as.factor(data$neighbourhood)
+#data$thumbnail_url <- as.factor(data$thumbnail_url)
+#data$zipcode <- as.factor(data$zipcode)
+```
+
+-   Summary statistics for factors
+
+```{r echo=FALSE}
+cat("\nSummary statistics for categorical attributes:\n")
+data %>%
+  select_if(is.factor) %>%
+  summary()
+```
+
+## Missing Value Imputation
+
+-   Check the number of missing value
+
+```{r echo=FALSE}
+count_missing <- function(x) {
+  sum(is.na(x) | x == "")
+}
+# Create a summary of missing values (NA and empty strings) for each column
+missing_values_summary <- data %>%
+  summarise_all(count_missing) %>%
+  gather(key = "variable", value = "missing_count") %>%
+  arrange(desc(missing_count))
+
+print(missing_values_summary)
+```
+
+```{r echo=FALSE}
+# Convert host_response_rate to numeric by removing the '%' sign
+data$host_response_rate <- as.numeric(gsub("%", "", data$host_response_rate))
+
+# Replace missing values with the median for numeric columns
+data$bathrooms[is.na(data$bathrooms)] <- median(data$bathrooms, na.rm = TRUE)
+data$bedrooms[is.na(data$bedrooms)] <- median(data$bedrooms, na.rm = TRUE)
+data$beds[is.na(data$beds)] <- median(data$beds, na.rm = TRUE)
+data$review_scores_rating[is.na(data$review_scores_rating)] <- median(data$review_scores_rating, 
+                                                                      na.rm = TRUE)
+data$host_response_rate[is.na(data$host_response_rate)] <- median(data$host_response_rate, 
+                                                                  na.rm = TRUE)
+
+# Replace missing values with specific values for categorical columns
+data$host_has_profile_pic[is.na(data$host_has_profile_pic) | data$host_has_profile_pic == ''] <- 'f'
+data$host_identity_verified[is.na(data$host_identity_verified) 
+                            | data$host_identity_verified == ''] <- 'f'
+data$first_review[is.na(data$first_review) | data$first_review == ''] <- 'Unknown'
+data$host_since[is.na(data$host_since) | data$host_since == ''] <- 'Unknown'
+data$last_review[is.na(data$last_review) | data$last_review == ''] <- 'Unknown'
+data$neighbourhood[is.na(data$neighbourhood) | data$neighbourhood == ''] <- 'Unknown'
+data$thumbnail_url[is.na(data$thumbnail_url) | data$thumbnail_url == ''] <- 'No URL'
+data$zipcode[is.na(data$zipcode) | data$zipcode == ''] <- 'Unknown'
+
+
+# Convert categorical columns to factors
+# data$thumbnail_url <- factor(data$thumbnail_url)
+data$zipcode <- factor(data$zipcode)
+data$host_has_profile_pic <- factor(data$host_has_profile_pic)
+data$first_review <- factor(data$first_review)
+data$last_review <- factor(data$last_review)
+data$host_since <- factor(data$host_since)
+data$host_identity_verified <- factor(data$host_identity_verified)
+data$neighbourhood <- factor(data$neighbourhood)
+
+
+# Summarize key statistics for numerical attributes after handling missing values
+cat("Updated summary statistics for numerical attributes:\n")
+data %>%
+  select_if(is.numeric) %>%
+  summary()
+
+# Summarize key statistics for categorical attributes after handling missing values
+cat("\nUpdated summary statistics for categorical attributes:\n")
+data %>%
+  select_if(is.factor) %>%
+  summary()
+```
+
+## Data Visualization
+
+-   Histogram of log prices
+
+```{r warning=FALSE, echo=FALSE}
+# Calculate price from log_price assuming log_price is the natural log of price
+df <- data.frame(price = exp(data$log_price), log_price = data$log_price)
+
+# Plot for 'price' using indianred1 color
+price_plot <- ggplot(df, aes(x = price)) +
+  geom_histogram(bins = 30, fill = "indianred1", color = "indianred1", alpha = 0.7) +
+  geom_density(aes(y = ..density.. * 10), color = "indianred1", linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Distribution of Prices",
+       x = "Price",
+       y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),  # Removes major grid lines
+        panel.grid.minor = element_blank())  # Removes minor grid lines
+
+# Plot for 'log_price' using indianred1 color
+log_price_plot <- ggplot(df, aes(x = log_price)) +
+  geom_histogram(bins = 30, fill = "indianred1", color = "indianred1", alpha = 0.7) +
+  geom_density(aes(y = ..density.. * 10), color = "indianred1", linewidth = 1) +
+  theme_minimal() +
+  labs(title = "Distribution of Log Prices",
+       x = "Log Price",
+       y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),  # Removes major grid lines
+        panel.grid.minor = element_blank())  # Removes minor grid lines
+
+# Combine the plots using patchwork
+combined_plot <- price_plot + log_price_plot + 
+  plot_layout(ncol = 2)
+
+# Print the combined plot
+print(combined_plot)
+```
+
+```{r echo=FALSE}
+ggsave("price_plot.png", plot = combined_plot, width = 10, height = 6, dpi = 300)
+```
+
+-   Box plot of log price
+
+```{r echo=FALSE}
+box_plot <- ggplot(df, aes(x = log_price)) +
+  geom_boxplot(fill = "indianred1", color = "black", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Box Plot of Log Prices",
+       x = "Log Price") +
+  theme(plot.title = element_text(hjust = 0.5))
+print(box_plot)
+```
+
+```{r echo=FALSE}
+ggsave("box_plot.png", plot = box_plot, width = 10, height = 6, dpi = 300)
+```
+
+-   Correlation plot for numerical columns
+
+```{r echo=FALSE}
+numerical_features <- data[, c('log_price', 'accommodates', 'bathrooms', 'host_response_rate', 
+                               'number_of_reviews', 'review_scores_rating', 'bedrooms', 'beds', 
+                               'latitude')]
+
+correlation_matrix <- cor(numerical_features, use = "complete.obs")
+
+corr_plot <- ggcorrplot(correlation_matrix, 
+           method = "circle", 
+           type = "lower", 
+           lab = TRUE, 
+           ggtheme = ggplot2::theme_minimal(), 
+           colors = c("#6D9EC1", "white", "indianred1"),
+           lab_size = 3,
+           outline.color = "gray")
+print(corr_plot)
+```
+
+```{r echo=FALSE}
+ggsave("corr_plot.png", plot = corr_plot, width = 10, height = 6, dpi = 300)
+```
+
+-   Scatter plot for log price vs numerical property features
+
+```{r echo=FALSE}
+scatter_plots <- list(
+  ggplot(data, aes(x = accommodates, y = log_price)) +
+    geom_point(color = "#CD5C5C", alpha = 0.6) +  # IndianRed
+    theme_minimal() +
+    ggtitle('Log Price vs Accommodates') +
+    theme(plot.title = element_text(hjust = 0.5)),
+  
+  ggplot(data, aes(x = bathrooms, y = log_price)) +
+    geom_point(color = "#F08080", alpha = 0.6) +  # LightCoral
+    theme_minimal() +
+    ggtitle('Log Price vs Bathrooms') +
+    theme(plot.title = element_text(hjust = 0.5)),
+  
+  ggplot(data, aes(x = bedrooms, y = log_price)) +
+    geom_point(color = "#FA8072", alpha = 0.6) +  # Salmon
+    theme_minimal() +
+    ggtitle('Log Price vs Bedrooms') +
+    theme(plot.title = element_text(hjust = 0.5)),
+  
+  ggplot(data, aes(x = beds, y = log_price)) +
+    geom_point(color = "#E9967A", alpha = 0.6) +  # DarkSalmon
+    theme_minimal() +
+    scale_x_continuous(breaks = seq(min(data$beds, na.rm = TRUE), max(data$beds, na.rm = TRUE), 
+                                    by = 1)) +
+    ggtitle('Log Price vs Beds') +
+    theme(plot.title = element_text(hjust = 0.5))
+)
+
+# Arrange all plots in a 2x2 grid layout
+two_two_plot <- grid.arrange(grobs = scatter_plots, ncol = 2)
+print(two_two_plot)
+```
+
+```{r echo=FALSE}
+ggsave("scatter_plot.png", plot = two_two_plot, width = 10, height = 8, dpi = 300)
+```
+
+-   Log Price Distribution Across Different 6 Cities
+
+```{r echo=FALSE}
+city <- ggplot(data, aes(x = city, y = log_price)) +
+  geom_boxplot(fill = "indianred1", color = "black") +
+  theme_minimal() +
+  labs(
+       x = "City",
+       y = "Log Price")
+print(city)
+```
+
+```{r echo=FALSE}
+ggsave("city_plot.png", plot = city, width = 10, height = 6, dpi = 300)
+```
+
+-   Log Price Distribution Across Top 10 Neighborhoods in NYC
+
+```{r echo=FALSE}
+nyc_data <- subset(data, city == "NYC")
+
+# Identify the top 10 neighborhoods based on frequency
+top_neighbourhoods <- names(sort(table(nyc_data$neighbourhood), decreasing = TRUE)[1:10])
+
+# Filter NYC data to only include the top 10 neighborhoods
+nyc_top_neighbourhoods_data <- subset(nyc_data, neighbourhood %in% top_neighbourhoods)
+
+# Log Price Distribution Across Top 10 Neighborhoods in NYC
+nyc <- ggplot(nyc_top_neighbourhoods_data, aes(x = neighbourhood, y = log_price)) +
+  geom_boxplot(fill = "indianred1", color = "black") +
+  theme_minimal() +
+  labs(
+       x = "Neighborhood",
+       y = "Log Price") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(nyc)
+```
+
+```{r echo=FALSE}
+ggsave("nyc_plot.png", plot = nyc, width = 10, height = 6, dpi = 300)
+```
+
+-   Distribution of Property Types
+
+```{r echo=FALSE}
+property <- ggplot(data, aes(y = reorder(property_type, -table(property_type)[property_type]))) +
+  geom_bar(fill = "indianred1") +
+  theme_minimal() +
+  labs(
+       x = "Count",
+       y = "Property Type")
+print(property)
+```
+
+```{r echo=FALSE}
+ggsave("property_plot.png", plot = property, width = 10, height = 8, dpi = 300)
+```
+
+-   Distribution of Room Types
+
+```{r echo=FALSE}
+room <- ggplot(data, aes(x = reorder(room_type, -table(room_type)[room_type]))) +
+  geom_bar(fill = "indianred1") +
+  theme_minimal() +
+  labs(
+       x = "Room Type",
+       y = "Count")
+print(room)
+```
+
+```{r echo=FALSE}
+ggsave("room_plot.png", plot = room, width = 10, height = 8, dpi = 300)
+```
+
+-   Popularity of Property Types by City
+
+```{r warinng=FALSE, echo=FALSE}
+property_type_proportion <- data %>%
+  group_by(city, property_type) %>%
+  summarize(count = n(), .groups = 'drop') %>%
+  group_by(city) %>%
+  mutate(proportion = count / sum(count)) %>%
+  filter(count > 0)  # Exclude property types with a count of zero
+
+# Plot the proportions
+ggplot(property_type_proportion, aes(y = reorder(property_type, -count), x = proportion
+                                     , fill = city)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Popularity of Property Types by City",
+       x = "Proportion",
+       y = "Property Type") +
+  guides(fill = guide_legend(title = "City"))
+```
+
+-   Popularity of Room Types by City
+
+```{r echo=FALSE}
+# Calculate proportions of room types by city
+room_type_proportion <- data %>%
+  group_by(city, room_type) %>%
+  summarize(count = n()) %>%
+  group_by(city) %>%
+  mutate(proportion = count / sum(count))
+
+city_colors <- c("indianred1", "#FFB6C1", "#87CEEB", "#98FB98", "#FFD700", "#DA70D6")
+
+# Plot the proportions
+city_portion <- ggplot(room_type_proportion, aes(x = reorder(room_type, -count), y = proportion, 
+                                                 fill = city)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(x = "Room Type",
+       y = "Proportion") +
+  scale_fill_manual(values = city_colors) +  
+  guides(fill = guide_legend(title = "City"))
+print(city_portion)
+```
+
+```{r echo=FALSE}
+ggsave("city_room_portion_plot.png", plot = city_portion, width = 10, height = 6, dpi = 300)
+```
+
+-   Average Prices for Different Property Types
+
+```{r echo=FALSE}
+property_avg <- data %>%
+  group_by(property_type) %>%
+  summarize(mean_log_price = mean(log_price, na.rm = TRUE)) %>%
+  arrange(desc(mean_log_price))
+
+property <- ggplot(property_avg, aes(y = reorder(property_type, mean_log_price), 
+                                     x = mean_log_price)) +
+  geom_bar(stat = "identity", fill = "indianred1") +
+  theme_minimal() +
+  labs(x = "Average Log Price",
+       y = "Property Type")
+print(property)
+```
+
+```{r echo=FALSE}
+ggsave("average_price_plot.png", plot = property, width = 10, height = 10, dpi = 300)
+```
+
+-   Average Prices for Different Room Types
+
+```{r echo=FALSE}
+room_avg <- data %>%
+  group_by(room_type) %>%
+  summarize(mean_log_price = mean(log_price, na.rm = TRUE)) %>%
+  arrange(desc(mean_log_price))
+
+room <- ggplot(room_avg, aes(x = reorder(room_type, mean_log_price), y = mean_log_price)) +
+  geom_bar(stat = "identity", fill = "indianred1") +
+  theme_minimal() +
+  labs(x = "Room Type",
+       y = "Average Log Price")
+print(room)
+```
+
+```{r echo=FALSE}
+ggsave("average_price_room_plot.png", plot = room, width = 6, height = 6, dpi = 300)
+```
+
+-   Distribution of Listings Across Different Cities
+
+```{r echo=FALSE}
+city_colors <- c("indianred1", "#FFB6C1", "#87CEEB", "#98FB98", "#FFD700", "#DA70D6")
+
+# Create the bar plot with city-specific colors
+city_count <- ggplot(data, aes(y = reorder(city, -table(city)[city]), fill = city)) +
+  geom_bar() +
+  theme_minimal() +
+  labs(x = "Count",
+       y = "City") +
+  scale_fill_manual(values = city_colors)
+
+print(city_count)
+```
+
+```{r echo=FALSE}
+ggsave("city_count_plot.png", plot = city_count, width = 10, height = 6, dpi = 300)
+```
+
+-   Distribution of Listings in Neighborhoods for the Top Cities
+
+```{r echo=FALSE}
+city_colors <- c("Boston" = "indianred1", 
+                 "Chicago" = "#FFB6C1", 
+                 "DC" = "#87CEEB", 
+                 "LA" = "#98FB98", 
+                 "NYC" = "#FFD700", 
+                 "SF" = "#DA70D6")
+
+# Analyze the distribution of listings in neighborhoods for the top cities
+top_cities <- data %>%
+  count(city, sort = TRUE) %>%
+  top_n(6, n) %>%
+  pull(city)
+
+# Create a list to hold the plots
+plots <- list()
+
+# Loop through each city and create a plot
+for (i in 1:length(top_cities)) {
+  current_city <- top_cities[i]
+  city_data <- data %>%
+    filter(city == current_city)
+  
+  # Select the top 10 neighborhoods for each city
+  top_neighbourhoods <- city_data %>%
+    count(neighbourhood, sort = TRUE) %>%
+    top_n(10, n) %>%
+    pull(neighbourhood)
+  
+  city_data_top_neighbourhoods <- city_data %>%
+    filter(neighbourhood %in% top_neighbourhoods) %>%
+    group_by(neighbourhood) %>%
+    summarize(count = n(), .groups = 'drop') %>%
+    mutate(proportion = count / sum(count))
+  
+  p <- ggplot(city_data_top_neighbourhoods, aes(y = reorder(neighbourhood, -proportion),
+                                                x = proportion)) +
+    geom_bar(stat = "identity", fill = city_colors[[current_city]]) +
+    theme_minimal() +
+    labs(title = current_city,
+         x = "Proportion",
+         y = "Neighborhood")
+  
+  plots[[current_city]] <- p
+}
+
+# Arrange the plots in a multi-column layout
+neigh <- do.call(grid.arrange, c(plots, ncol = 2))
+print(neigh)
+```
+
+```{r echo=FALSE}
+ggsave("neigh_plot.png", plot = neigh, width = 10, height = 10, dpi = 300)
+```
+
+```{r echo=FALSE}
+if (is.character(data$amenities[1])) {
+  data <- data %>%
+    mutate(amenities = str_remove_all(amenities, '[{}"]')) %>%
+    mutate(amenities = str_split(amenities, ','))
+}
+
+# Unnest the amenities list column into multiple binary columns
+data_unnested <- data %>%
+  unnest(amenities) %>%
+  mutate(amenities = str_trim(amenities)) %>%  # Trim white spaces
+  mutate(amenities = ifelse(amenities == "", NA, amenities)) %>%  # Handle empty strings
+  filter(!is.na(amenities)) %>%  # Remove NA amenities
+  distinct() %>%
+  mutate(dummy = 1) %>%
+  pivot_wider(names_from = amenities, values_from = dummy, values_fill = list(dummy = 0))
+
+# Select only the amenities columns for correlation analysis
+amenities_cols <- data_unnested %>%
+  select(-id, -log_price, -review_scores_rating, -accommodates, -bathrooms, -number_of_reviews, 
+         -latitude, -longitude, -host_response_rate, -bedrooms, -beds, -host_has_profile_pic) %>%
+  select(where(is.numeric))
+
+# Analyze the impact of amenities on log_price
+amenities_price_impact <- amenities_cols %>%
+  summarise(across(everything(), ~ cor(.x, data_unnested$log_price, use = "complete.obs"))) %>%
+  pivot_longer(everything(), names_to = "amenity", values_to = "correlation") %>%
+  filter(!str_detect(amenity, "translation missing")) %>%  # Exclude translation missing amenities
+  arrange(desc(correlation))
+
+# Select top 10 positive and top 10 negative correlations for log_price
+top_positive_price <- amenities_price_impact %>% top_n(10, correlation)
+top_negative_price <- amenities_price_impact %>% top_n(-10, correlation)
+top_price_impact <- bind_rows(top_positive_price, top_negative_price)
+
+# Plot the top 10 positive and top 10 negative correlations for log_price
+amenities_price <- ggplot(top_price_impact, aes(x = correlation, y = reorder(amenity, correlation), 
+                                                fill = correlation > 0)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("TRUE" = "indianred1", "FALSE" = "#6D9EC1")) +
+  theme_minimal() +
+  labs(x = "Correlation with Log Price",
+       y = "Amenities")
+
+# Analyze the impact of amenities on review_scores_rating
+amenities_review_impact <- amenities_cols %>%
+  summarise(across(everything(), ~ cor(.x, data_unnested$review_scores_rating, use = "complete.obs"))) %>%
+  pivot_longer(everything(), names_to = "amenity", values_to = "correlation") %>%
+  filter(!str_detect(amenity, "translation missing")) %>%  # Exclude translation missing amenities
+  arrange(desc(correlation))
+
+# Select top 10 positive and top 10 negative correlations for review_scores_rating
+top_positive_review <- amenities_review_impact %>% top_n(10, correlation)
+top_negative_review <- amenities_review_impact %>% top_n(-10, correlation)
+top_review_impact <- bind_rows(top_positive_review, top_negative_review)
+
+# Plot the top 10 positive and top 10 negative correlations for review_scores_rating
+amenities_review <- ggplot(top_review_impact, aes(x = correlation, 
+                                                  y = reorder(amenity, correlation), 
+                                                  fill = correlation > 0)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("TRUE" = "indianred1", "FALSE" = "#6D9EC1")) +
+  labs(x = "Correlation with Review Scores Rating",
+       y = "Amenities")
+print(amenities_price)
+print(amenities_review)
+```
+
+```{r echo=FALSE}
+ggsave("amenities_price_plot.png", plot = amenities_price, width = 10, height = 10, dpi = 300)
+ggsave("amenities_review_plot.png", plot = amenities_review, width = 10, height = 10, dpi = 300)
+```
+
+```{r echo=FALSE}
+# Convert 'host_since' to Date and create a new feature 'host_duration_years' to see 
+# how long they have been a host
+data$host_since <- as.Date(data$host_since)
+data$host_duration_years <- as.numeric((Sys.Date() - data$host_since) / 365.25)
+
+# Convert 'host_has_profile_pic' and 'host_identity_verified' to numeric for correlation analysis
+data$host_has_profile_pic <- ifelse(data$host_has_profile_pic == "t", 1, 0)
+data$host_identity_verified <- ifelse(data$host_identity_verified == "t", 1, 0)
+```
+
+```{r echo=FALSE}
+# Select relevant columns for analysis
+host_data <- data %>%
+  select(host_response_rate, host_has_profile_pic, host_identity_verified, 
+         log_price, host_duration_years)
+
+# Calculate the correlation matrix for host_data
+correlation_matrix <- cor(host_data, use = "complete.obs")
+
+# Plot the correlation matrix using ggcorrplot
+corr_plot <- ggcorrplot(correlation_matrix,
+           method = "circle",
+           type = "lower",
+           lab = TRUE, # Show correlation coefficients
+           ggtheme = ggplot2::theme_minimal(),
+           colors = c("#6D9EC1", "white", "indianred1"),
+           lab_size = 3,
+           outline.color = "gray")
+print(corr_plot)
+```
+
+```{r echo=FALSE}
+ggsave("corr_host_plot.png", plot = corr_plot, width = 10, height = 8, dpi = 300)
+```
+
+```{r echo=FALSE}
+# Define host features and output variables
+host_features <- c("host_has_profile_pic", "host_identity_verified")
+
+# Create lists to store plots separately for log_price and review_scores_rating
+plot_list_log_price <- vector("list", length = length(host_features))
+plot_list_review_scores <- vector("list", length = length(host_features))
+
+# Create plots and store them in the respective lists
+for (i in seq_along(host_features)) {
+  host_feature <- host_features[i]
+  
+  plot_list_log_price[[i]] <- ggplot(data, aes(x = .data[[host_feature]], y = log_price)) +
+    geom_boxplot(aes(group = .data[[host_feature]]), fill = "indianred1") +
+    theme_minimal() +
+    labs(title = paste("Log Price vs", host_feature), x = host_feature, y = "Log Price") +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  plot_list_review_scores[[i]] <- ggplot(data, aes(x = .data[[host_feature]], 
+                                                   y = review_scores_rating)) +
+    geom_boxplot(aes(group = .data[[host_feature]]), fill = "indianred1") +
+    theme_minimal() +
+    labs(title = paste("Review Scores Rating vs", host_feature), x = host_feature, 
+         y = "Review Scores Rating") +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+# Display log_price plots
+log_price_host <- grid.arrange(grobs = plot_list_log_price, ncol = 2)
+print(log_price_host)
+
+# Display review_scores_rating plots
+review_scores_host <- grid.arrange(grobs = plot_list_review_scores, ncol = 2)
+print(review_scores_host)
+```
+
+```{r echo=FALSE}
+ggsave("log_price_host_plot.png", plot = log_price_host, width = 10, height = 6, dpi = 300)
+ggsave("review_host_plot.png", plot = review_scores_host, width = 10, height = 6, dpi = 300)
+```
+
+-   Distribution of Review Scores
+
+```{r echo=FALSE}
+histogram_plot <- ggplot(data, aes(x = review_scores_rating)) +
+  geom_histogram(bins = 20, fill = "indianred1", color = "indianred1", alpha = 0.7) +
+  geom_density(color = "indianred1", size = 1) +
+  labs(title = "Distribution of Review Scores",
+       x = "Review Scores Rating",
+       y = "Frequency") +
+  theme_minimal()
+
+boxplot_plot <- ggplot(data, aes(y = review_scores_rating)) +
+  geom_boxplot(fill = "indianred1", color = "indianred1", alpha = 0.7) +
+  coord_flip() +  # 가로로 회전
+  labs(title = "Box Plot of Review Scores",
+       x = "",
+       y = "Review Scores Rating") +
+  theme_minimal()
+
+combined_plot <- histogram_plot + boxplot_plot + plot_layout(ncol = 2)
+print(combined_plot)
+```
+
+```{r echo=FALSE}
+ggsave("review_scores_plot.png", plot = combined_plot, width = 10, height = 6, dpi = 300)
+```
+
+-   Box plot for Room Type
+
+```{r echo=FALSE}
+review_room <- ggplot(data, aes(x = room_type, y = review_scores_rating)) +
+  geom_boxplot(fill = "indianred1") +
+  labs(x = "Room Type",
+       y = "Review Scores Rating") +
+  theme_minimal()
+print(review_room)
+```
+
+```{r echo=FALSE}
+ggsave("review_room_plot.png", plot = review_room, width = 10, height = 6, dpi = 300)
+```
+
+-   Box plot for Property Type
+
+```{r echo=FALSE}
+review_property <- ggplot(data, aes(x = reorder(property_type, -table(property_type)[property_type]), 
+                                    y = review_scores_rating)) +
+  geom_boxplot(fill = "indianred1") +
+  labs(
+       x = "Property Type",
+       y = "Review Scores Rating") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+print(review_property)
+```
+
+```{r echo=FALSE}
+ggsave("review_property_plot.png", plot = review_property, width = 10, height = 6, dpi = 300)
+```
+
+\newpage
+
+## 5. Appendix
+
+```{r ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
