@@ -6,7 +6,7 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# CART Model, Random Forest, and Gradient Boosting
+# 5. CART Model, Random Forest, and Gradient Boosting
 
 ## Data Processing
 
