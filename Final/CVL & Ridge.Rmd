@@ -1,0 +1,365 @@
+---
+title: "Final_project"
+output: pdf_document
+date: "2024-05-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(glmnet)
+library(caret)
+
+data <- read.csv("Airbnb_Data.csv")
+
+# delete id and text variables
+data <- select(data, -c(id, description, name))
+
+data$room_type <- as.factor(data$room_type)
+data$property_type <- as.factor(data$property_type)
+data$bed_type <- as.factor(data$bed_type)
+data$cancellation_policy <- as.factor(data$cancellation_policy)
+data$city <- as.factor(data$city)
+data$host_has_profile_pic <- as.factor(data$host_has_profile_pic)
+data$host_identity_verified <- as.factor(data$host_identity_verified)
+data$host_response_rate <- as.factor(data$host_response_rate)
+data$instant_bookable <- as.factor(data$instant_bookable)
+
+# Convert host_response_rate to numeric by removing the '%' sign
+data$host_response_rate <- as.numeric(gsub("%", "", data$host_response_rate))
+
+# handle amenities variable: transform into multiple columns
+data$amenities <- str_replace_all(data$amenities, '[{}"]', '')
+amenities_list <- str_split(data$amenities, ",")
+
+all_amenities <- unique(unlist(amenities_list))
+
+for (amenity in all_amenities) {
+  data[[amenity]] <- sapply(amenities_list, function(x) amenity %in% x)
+}
+
+data <- select(data, -amenities)
+
+# handle date variables
+data$first_review <- as.Date(data$first_review, format="%Y-%m-%d")
+data$last_review <- as.Date(data$last_review, format="%Y-%m-%d")
+data$host_since <- as.Date(data$host_since, format="%Y-%m-%d")
+
+# transform date variables into more meaningful variables
+data$days_since_first_review <- c(Sys.Date() - data$first_review)
+data$days_since_last_review <- c(Sys.Date() - data$last_review)
+data$host_duration <- c(Sys.Date() - data$host_since)
+
+# delete first_review, last_review, host_since
+data <- select(data, -c(first_review, last_review, host_since))
+
+# turn thumbnail_url into a binary categorical variable
+data$has_thumbnail <- ifelse(is.na(data$thumbnail_url) | data$thumbnail_url == "", FALSE, TRUE)
+
+# delete thumbnail_url
+data <- select(data, -thumbnail_url)
+
+count_missing <- function(x) {
+  sum(is.na(x) | x == "")
+}
+
+# Create a summary of missing values (NA and empty strings) for each column
+missing_values_summary <- data %>%
+  summarise_all(count_missing) %>%
+  gather(key = "variable", value = "missing_count") %>%
+  arrange(desc(missing_count))
+
+print(missing_values_summary)
+
+# Impute the above numerical variables that have missing values with median values
+data$host_response_rate[is.na(data$host_response_rate)] <- median(data$host_response_rate, na.rm = TRUE)
+data$review_scores_rating[is.na(data$review_scores_rating)] <- median(data$review_scores_rating, na.rm = TRUE)
+data$days_since_first_review[is.na(data$days_since_first_review)] <- median(data$days_since_first_review, na.rm = TRUE)
+data$days_since_last_review[is.na(data$days_since_last_review)] <- median(data$days_since_last_review, na.rm = TRUE)
+data$bathrooms[is.na(data$bathrooms)] <- median(data$bathrooms, na.rm = TRUE)
+data$host_duration[is.na(data$host_duration)] <- median(data$host_duration, na.rm = TRUE)
+data$beds[is.na(data$beds)] <- median(data$beds, na.rm = TRUE)
+data$bedrooms[is.na(data$bedrooms)] <- median(data$bedrooms, na.rm = TRUE)
+
+# Replace missing values with specific values for categorical columns
+data$host_has_profile_pic[is.na(data$host_has_profile_pic) | data$host_has_profile_pic == ''] <- 'f'
+data$host_identity_verified[is.na(data$host_identity_verified) | data$host_identity_verified == ''] <- 'f'
+data$neighbourhood[is.na(data$neighbourhood) | data$neighbourhood == ''] <- 'Unknown'
+data$zipcode[is.na(data$zipcode) | data$zipcode == ''] <- 'Unknown'
+
+# Convert to factors
+data$neighbourhood <- as.factor(data$neighbourhood)
+data$zipcode <- as.factor(data$zipcode)
+
+# extract numerical variable names
+numeric_vars <- c("log_price", "accommodates", "bathrooms", "host_response_rate", 
+                  "latitude", "longitude", "number_of_reviews", "review_scores_rating", 
+                  "bedrooms", "beds", "days_since_first_review", "days_since_last_review", 
+                  "host_duration")
+
+data[numeric_vars] <- lapply(data[numeric_vars], as.numeric)
+
+# extract categorical variable names
+categorical_vars <- setdiff(names(data), numeric_vars)
+
+# standardize numerical variables
+data_numeric <- scale(data[numeric_vars])
+data_numeric <- as.data.frame(data_numeric)
+
+# combine standardized numerical variables with categorical variables
+data_scale <- cbind(as.data.frame(data_numeric), data[categorical_vars])
+```
+
+
+
+```{r}
+data_scale$cleaning_fee <- as.logical(data_scale$cleaning_fee)
+
+##Regression_numerical&categorical
+# Separate features and target variable
+x <- model.matrix(log_price ~ ., data_scale)[, -1]
+y <- data_scale$log_price
+
+# Set up cross-validation for LASSO and Ridge Regression
+set.seed(123) # For reproducibility
+cv_lasso <- cv.glmnet(x, y, alpha = 1, family = 'gaussian', standardize = TRUE)
+cv_ridge <- cv.glmnet(x, y, alpha = 0, family = 'gaussian', standardize = TRUE)
+
+# Best lambda for each model
+best_lambda_lasso <- cv_lasso$lambda.min
+best_lambda_ridge <- cv_ridge$lambda.min
+
+# Train the final models using the best lambda
+lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda_lasso, family = 'gaussian', standardize = TRUE)
+ridge_model <- glmnet(x, y, alpha = 0, lambda = best_lambda_ridge, family = 'gaussian', standardize = TRUE)
+
+# Evaluate models
+# Split the data into training and test sets
+set.seed(123) # For reproducibility
+trainIndex <- createDataPartition(data_scale$log_price, p = 0.8, list = FALSE, times = 1)
+loft_train <- data_scale[trainIndex, ]
+loft_test <- data_scale[-trainIndex, ]
+
+# Prepare training and test sets for prediction
+x_train <- model.matrix(log_price ~ ., loft_train)[, -1]
+y_train <- loft_train$log_price
+x_test <- model.matrix(log_price ~ ., loft_test)[, -1]
+y_test <- loft_test$log_price
+
+# Predictions
+lasso_pred <- predict(lasso_model, s = best_lambda_lasso, family = 'gaussian', newx = x_test)
+ridge_pred <- predict(ridge_model, s = best_lambda_ridge, faimily = 'gaussian', newx = x_test)
+
+# Calculate performance metrics
+lasso_mse <- mean((y_test - lasso_pred)^2)
+lasso_rmse <- sqrt(lasso_mse)
+lasso_mae <- mean(abs(y_test - lasso_pred))
+lasso_r2 <- cor(y_test, lasso_pred)^2
+
+ridge_mse <- mean((y_test - ridge_pred)^2)
+ridge_rmse <- sqrt(ridge_mse)
+ridge_mae <- mean(abs(y_test - ridge_pred))
+ridge_r2 <- cor(y_test, ridge_pred)^2
+
+# Compare models
+comparison <- data.frame(
+  Model = c("LASSO", "Ridge"),
+  RMSE = c(lasso_rmse, ridge_rmse),
+  MSE = c(lasso_mse, ridge_mse),
+  MAE = c(lasso_mae, ridge_mae),
+  R_squared = c(lasso_r2, ridge_r2)
+)
+comparison
+```
+
+```{r}
+set.seed(123) # for reproducibility
+train_index <- createDataPartition(data_scale$log_price, p = 0.8, list = FALSE)
+train_data <- data_scale[train_index, ]
+test_data <- data_scale[-train_index, ]
+
+# Define the predictors (X) and the response (Y)
+X <- as.matrix(train_data[, -which(names(train_data) == "log_price")])
+Y <- train_data$log_price
+# Fit a regularized model using glmnet with cross-validation
+cv.fit <- cv.glmnet(x_train, y_train, family = "gaussian", alpha = 1) # alpha = 1 for lasso regularization
+
+# Get the coefficients for the best lambda value
+coefficients_best_lambda <- coef(cv.fit, s = "lambda.min")
+head(coefficients_best_lambda, 20)
+nonzero_coef_best_lambda_count <- sum(coefficients_best_lambda[-1] != 0)
+print(nonzero_coef_best_lambda_count)
+
+# Get the coefficients for the lambda value selected by 1 standard error rule
+coefficients_1se <- coef(cv.fit, s = "lambda.1se")
+head(coefficients_1se, 20)
+nonzero_coef_1se_count <- sum(coefficients_1se[-1] != 0)
+print(nonzero_coef_1se_count)
+
+```
+
+
+```{r}
+plot(cv.fit)
+```
+
+
+```{r}
+#Top 10 coefficients for general analysis with LASSO
+lasso_coefs <- coef(lasso_model, s = best_lambda_lasso)
+lasso_coefs <- as.data.frame(as.matrix(lasso_coefs))
+colnames(lasso_coefs) <- c("Coefficient")
+lasso_coefs <- lasso_coefs %>%
+  rownames_to_column(var = "Feature") %>%
+  arrange(desc(abs(Coefficient)))
+head(lasso_coefs, 10)
+```
+
+```{r}
+# Extract coefficients for general analysis with Ridge
+ridge_coefs <- coef(ridge_model, s = best_lambda_ridge)
+ridge_coefs <- as.data.frame(as.matrix(ridge_coefs))
+colnames(ridge_coefs) <- c("Coefficient")
+ridge_coefs <- ridge_coefs %>%
+  rownames_to_column(var = "Feature") %>%
+  arrange(desc(abs(Coefficient)))
+head(ridge_coefs, 10)
+```
+
+
+```{r}
+#In_sample_R2 vs OOS_R2 comparison
+lasso_pred_train <- predict(lasso_model, s = best_lambda_lasso, family = 'gaussian', newx = x_train)
+ridge_pred_train <- predict(ridge_model, s = best_lambda_ridge, family = 'gaussian', newx = x_train)
+
+lasso_pred_test <- predict(lasso_model, s = best_lambda_lasso, newx = x_test)
+ridge_pred_test <- predict(ridge_model, s = best_lambda_ridge, newx = x_test)
+
+in_sample_r2 <- function(y_true, y_pred) {
+  cor(y_true, y_pred)^2
+}
+out_of_sample_r2 <- function(y_true, y_pred) {
+  1 - sum((y_true - y_pred)^2) / sum((y_true - mean(y_true))^2)
+}
+
+lasso_in_sample_r2 <- in_sample_r2(y_train, lasso_pred_train)
+ridge_in_sample_r2 <- in_sample_r2(y_train, ridge_pred_train)
+
+lasso_out_sample_r2 <- out_of_sample_r2(y_test, lasso_pred_test)
+ridge_out_sample_r2 <- out_of_sample_r2(y_test, ridge_pred_test)
+
+comparison <- data.frame(
+  Model = c("LASSO", "Ridge"),
+  In_sample_R2 = c(lasso_in_sample_r2, ridge_in_sample_r2),
+  Out_sample_R2 = c(lasso_out_sample_r2, ridge_out_sample_r2)
+)
+comparison
+```
+```{r}
+lasso_lambda <- log(cv_lasso$lambda)
+lasso_deviance <- cv_lasso$cvm
+
+ridge_lambda <- log(cv_ridge$lambda)
+ridge_deviance <- cv_ridge$cvm
+
+# Plot mean deviance against log lambda for LASSO
+plot(lasso_lambda, lasso_deviance, type = "b", pch = 16,
+     xlab = "log(lambda)", ylab = "Mean Deviance", 
+     main = "Mean Deviance vs. Log Lambda for LASSO")
+
+# Plot mean deviance against log lambda for Ridge
+plot(ridge_lambda, ridge_deviance, type = "b", pch = 16,
+     xlab = "log(lambda)", ylab = "Mean Deviance", 
+     main = "Mean Deviance vs. Log Lambda for Ridge")
+```
+
+
+```{r}
+# Evaluate models_treatment variables
+names(train_data)
+
+X_treatment <- model.matrix(log_price~.-1,train_data)
+Y_treatment <- train_data$log_price
+
+X_test <- model.matrix(log_price~.-1,test_data)
+Y_test <- test_data$log_price
+
+# Fit a regularized model using glmnet with cross-validation
+cv_fit_treatment <- cv.glmnet(X_treatment, Y_treatment, family = "gaussian", alpha = 1)
+cv_fit_test <- cv.glmnet(X_test,Y_test, family = "gaussian", alpha = 1)
+
+# Get the coefficients for the best lambda value
+coefficients_best_lambda_treatment <- coef(cv_fit_treatment, s = "lambda.min")
+head(coefficients_best_lambda_treatment, 20)
+
+# Get the coefficients for the lambda value selected by 1 standard error rule
+coefficients_1se_treatment <- coef(cv_fit_treatment, s = "lambda.1se")
+head(coefficients_1se_treatment,20)
+
+# Predictions
+treatment_pred_train <- predict(cv_fit_treatment, s = "lambda.min", newx = X_treatment)
+treatment_pred_test <- predict(cv_fit_treatment, s = "lambda.min", newx = X_test)
+
+in_sample_r2_treatment <- in_sample_r2(Y_treatment, treatment_pred_train)
+in_sample_r2_treatment
+out_of_sample_r2_treatment <- out_of_sample_r2(Y_test, treatment_pred_test)
+out_of_sample_r2_treatment
+
+comparison_treatment <- data.frame(
+  Model = "Treatment Model",
+  In_sample_R2 = in_sample_r2_treatment,
+  Out_sample_R2 = out_of_sample_r2_treatment
+)
+comparison_treatment
+
+```
+
+
+```{r}
+set.seed(123)
+
+# Define predictors (X) and response (Y) for treatment variables
+X_treatment <- model.matrix(log_price ~ . - 1, train_data)
+Y_treatment <- train_data$log_price
+
+X_test <- model.matrix(log_price ~ . - 1, test_data)
+Y_test <- test_data$log_price
+
+# Fit a naive LASSO model
+naive_lasso_fit <- glmnet(X_treatment, Y_treatment, family = "gaussian", alpha = 1) 
+lambda_values <- naive_lasso_fit$lambda
+coefficients_best_lambda_treatment <- coef(naive_lasso_fit, s = min(lambda_values))
+head(coefficients_best_lambda_treatment, 20)
+
+# Get the coefficients for the lambda value selected by 1 standard error rule
+lambda_value <- cv_fit_treatment$lambda.min
+treatment_pred_lambda <- predict(cv_fit_treatment, s = lambda_value, newx = X_treatment)
+coefficients_1se_treatment <- coef(naive_lasso_fit, s = lambda_value)
+head(coefficients_1se_treatment, 20)
+
+# Predictions
+treatment_pred_train <- predict(naive_lasso_fit, s = min(lambda_values), newx = X_treatment)
+treatment_pred_test <- predict(naive_lasso_fit, s = min(lambda_values), newx = X_test)
+
+# Calculate performance metrics
+in_sample_r2_treatment <- in_sample_r2(Y_treatment, treatment_pred_train)
+in_sample_r2_treatment
+out_of_sample_r2_treatment <- out_of_sample_r2(Y_test, treatment_pred_test)
+
+comparison_treatment <- data.frame(
+  Model = "Naive LASSO Model",
+  In_sample_R2 = in_sample_r2_treatment,
+  Out_sample_R2 = out_of_sample_r2_treatment
+)
+comparison_treatment
+```
+
+
+
+
+
+
+
